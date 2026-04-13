@@ -26,6 +26,8 @@ import html2pdf from 'html2pdf.js';
 import { exportToEsusCSV } from '../utils/exportEsus';
 import { useOfflineSync } from '../hooks/useOfflineSync';
 import { WifiOff, RefreshCw } from 'lucide-react';
+import Slider from 'rc-slider';
+import 'rc-slider/assets/index.css';
 
 interface SurveyResponse {
   id: string;
@@ -60,8 +62,8 @@ export function Dashboard() {
   const [filterNeighborhood, setFilterNeighborhood] = useState<string>('all');
   const [filterHealthUnit, setFilterHealthUnit] = useState<string>('all');
   const [filterServiceType, setFilterServiceType] = useState<string>('all');
-  const [filterStartYear, setFilterStartYear] = useState<string>('all');
-  const [filterEndYear, setFilterEndYear] = useState<string>('all');
+  const [filterTargetGroup, setFilterTargetGroup] = useState<string>('all');
+  const [filterYearRange, setFilterYearRange] = useState<[number, number]>([2020, new Date().getFullYear()]);
   
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [healthUnits, setHealthUnits] = useState<any[]>([]);
@@ -135,9 +137,15 @@ export function Dashboard() {
   }, [healthUnits, filterState, filterCity, filterNeighborhood]);
 
   const availableYears = useMemo(() => {
-    const years = new Set(responses.map(r => new Date(r.created_at).getFullYear().toString()));
-    return Array.from(years).sort((a: string, b: string) => parseInt(b) - parseInt(a)); // Sort descending
+    const years = new Set(responses.map(r => new Date(r.created_at).getFullYear()));
+    return Array.from(years).sort((a, b) => a - b); // Sort ascending for slider
   }, [responses]);
+
+  useEffect(() => {
+    if (availableYears.length > 0) {
+      setFilterYearRange([availableYears[0], availableYears[availableYears.length - 1]]);
+    }
+  }, [availableYears]);
 
   const filteredResponses = useMemo(() => {
     return responses.filter(r => {
@@ -146,14 +154,14 @@ export function Dashboard() {
       if (filterNeighborhood !== 'all' && r.neighborhood !== filterNeighborhood) return false;
       // if (filterHealthUnit !== 'all' && r.health_unit !== filterHealthUnit) return false;
       if (filterServiceType !== 'all' && r.service_type !== filterServiceType) return false;
+      if (filterTargetGroup !== 'all' && r.target_group !== filterTargetGroup) return false;
       
-      const responseYear = new Date(r.created_at).getFullYear().toString();
-      if (filterStartYear !== 'all' && parseInt(responseYear) < parseInt(filterStartYear)) return false;
-      if (filterEndYear !== 'all' && parseInt(responseYear) > parseInt(filterEndYear)) return false;
+      const responseYear = new Date(r.created_at).getFullYear();
+      if (responseYear < filterYearRange[0] || responseYear > filterYearRange[1]) return false;
       
       return true;
     });
-  }, [responses, filterState, filterCity, filterNeighborhood, filterHealthUnit, filterServiceType, filterStartYear, filterEndYear]);
+  }, [responses, filterState, filterCity, filterNeighborhood, filterHealthUnit, filterServiceType, filterTargetGroup, filterYearRange]);
   
   const currentStats = filteredResponses.length > 0 ? {
     avgScore: filteredResponses.reduce((acc, curr) => acc + (Number(curr.score) || 0), 0) / filteredResponses.length,
@@ -385,8 +393,8 @@ export function Dashboard() {
         filterCity,
         filterNeighborhood,
         filterServiceType,
-        filterStartYear,
-        filterEndYear,
+        filterTargetGroup,
+        filterYearRange,
         servicesGap: groupedBarData.map(g => `${g.name} (Disp: ${g.Disponível}, Prest: ${g.Prestado})`).slice(0, 3)
       };
 
@@ -403,8 +411,8 @@ export function Dashboard() {
         - Cidade: ${dataSummary.filterCity === 'all' ? 'Todas' : dataSummary.filterCity}
         - Bairro: ${dataSummary.filterNeighborhood === 'all' ? 'Todos' : dataSummary.filterNeighborhood}
         - Serviço: ${dataSummary.filterServiceType === 'all' ? 'Todos' : dataSummary.filterServiceType === 'bucal' ? 'Saúde Bucal' : 'Saúde Geral'}
-        - Ano Inicial: ${dataSummary.filterStartYear === 'all' ? 'Todos' : dataSummary.filterStartYear}
-        - Ano Final: ${dataSummary.filterEndYear === 'all' ? 'Todos' : dataSummary.filterEndYear}
+        - Público-alvo: ${dataSummary.filterTargetGroup === 'all' ? 'Todos' : dataSummary.filterTargetGroup}
+        - Período: ${dataSummary.filterYearRange[0]} a ${dataSummary.filterYearRange[1]}
         
         Principais Bairros (Escore Médio):
         ${dataSummary.neighborhoods.join('\n')}
@@ -602,27 +610,46 @@ export function Dashboard() {
             </div>
 
             <div className="flex flex-col">
-              <label className="text-[10px] font-medium text-blue-200 uppercase tracking-wider mb-1 ml-1 opacity-80">Ano Inicial</label>
+              <label className="text-[10px] font-medium text-blue-200 uppercase tracking-wider mb-1 ml-1 opacity-80">Público-alvo</label>
               <select 
-                value={filterStartYear}
-                onChange={(e) => setFilterStartYear(e.target.value)}
+                value={filterTargetGroup}
+                onChange={(e) => setFilterTargetGroup(e.target.value)}
                 className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-xs font-bold outline-none backdrop-blur-sm"
               >
-                <option value="all" className="text-slate-900">Todos</option>
-                {availableYears.map(y => <option key={y} value={y} className="text-slate-900">{y}</option>)}
+                <option value="all" className="text-slate-900">Todos os Públicos</option>
+                <option value="Adulto" className="text-slate-900">Adultos</option>
+                <option value="Criança" className="text-slate-900">Crianças</option>
+                <option value="Profissional" className="text-slate-900">Profissionais</option>
               </select>
             </div>
 
-            <div className="flex flex-col">
-              <label className="text-[10px] font-medium text-blue-200 uppercase tracking-wider mb-1 ml-1 opacity-80">Ano Final</label>
-              <select 
-                value={filterEndYear}
-                onChange={(e) => setFilterEndYear(e.target.value)}
-                className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-xs font-bold outline-none backdrop-blur-sm"
-              >
-                <option value="all" className="text-slate-900">Todos</option>
-                {availableYears.map(y => <option key={y} value={y} className="text-slate-900">{y}</option>)}
-              </select>
+            <div className="flex flex-col min-w-[200px] px-2">
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-[10px] font-medium text-blue-200 uppercase tracking-wider opacity-80">Período</label>
+                <span className="text-[10px] font-bold text-white">{filterYearRange[0]} - {filterYearRange[1]}</span>
+              </div>
+              <div className="px-2 pt-1">
+                <Slider
+                  range
+                  min={availableYears.length > 0 ? availableYears[0] : 2020}
+                  max={availableYears.length > 0 ? Math.max(availableYears[availableYears.length - 1], availableYears[0] + 1) : new Date().getFullYear()}
+                  value={filterYearRange}
+                  onChange={(val) => setFilterYearRange(val as [number, number])}
+                  marks={availableYears.reduce((acc, year) => {
+                    acc[year] = {
+                      style: { color: 'rgba(255,255,255,0.5)', fontSize: '9px', marginTop: '2px' },
+                      label: year.toString()
+                    };
+                    return acc;
+                  }, {} as Record<number, any>)}
+                  step={1}
+                  styles={{
+                    track: { backgroundColor: '#3b82f6' },
+                    handle: { borderColor: '#3b82f6', backgroundColor: '#fff' },
+                    rail: { backgroundColor: 'rgba(255,255,255,0.2)' }
+                  }}
+                />
+              </div>
             </div>
           </div>
         
