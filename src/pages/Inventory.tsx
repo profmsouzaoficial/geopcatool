@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, UserSquare2, Users, Stethoscope, ArrowRight, MapPin, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 export function Inventory() {
   const navigate = useNavigate();
@@ -8,7 +9,9 @@ export function Inventory() {
   const selectionState = location.state as { targetGroup: string; version: string } | null;
   
   const [isSearchingCep, setIsSearchingCep] = useState(false);
+  const [healthUnits, setHealthUnits] = useState<{ id: string, name: string }[]>([]);
   const [formData, setFormData] = useState({
+    healthUnitName: '',
     registrationNumber: '',
     birthDate: '',
     age: '',
@@ -25,6 +28,26 @@ export function Inventory() {
     transportMode: '',
     serviceType: selectionState?.targetGroup === 'Bucal' ? 'bucal' : 'geral'
   });
+
+  // Fetch health units from Supabase
+  useEffect(() => {
+    const fetchHealthUnits = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('health_units')
+          .select('id, name')
+          .order('name');
+          
+        if (data && !error) {
+          setHealthUnits(data);
+        }
+      } catch (error) {
+        console.error('Error fetching health units:', error);
+      }
+    };
+    
+    fetchHealthUnits();
+  }, []);
 
   // Calculate age automatically when birthDate changes
   useEffect(() => {
@@ -141,6 +164,21 @@ export function Inventory() {
               <h3 className="text-xl font-bold text-slate-900">I. Identificação</h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="block space-y-2 md:col-span-2">
+                <span className="text-sm font-medium text-slate-700">Nome da Unidade de Saúde onde está sendo realizada a entrevista *</span>
+                <select 
+                  name="healthUnitName"
+                  value={formData.healthUnitName}
+                  onChange={handleChange}
+                  required
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                >
+                  <option value="" disabled>Selecione a Unidade de Saúde</option>
+                  {healthUnits.map(unit => (
+                    <option key={unit.id} value={unit.name}>{unit.name}</option>
+                  ))}
+                </select>
+              </label>
               <label className="block space-y-2">
                 <span className="text-sm font-medium text-slate-700">Registro *</span>
                 <input 

@@ -284,6 +284,7 @@ export function Questionnaire() {
 
       const responseData = {
         user_id: user?.id,
+        health_unit_name: inventory?.healthUnitName,
         registration_number: inventory?.registrationNumber,
         birth_date: inventory?.birthDate,
         age: inventory?.age ? parseInt(inventory.age) : null,

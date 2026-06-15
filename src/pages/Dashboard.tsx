@@ -22,6 +22,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 import { HeatmapLayer } from '../components/HeatmapLayer';
+import { InteractiveChoroplethDashboard } from '../components/InteractiveChoroplethDashboard';
 import html2pdf from 'html2pdf.js';
 import { exportToEsusCSV } from '../utils/exportEsus';
 import { useOfflineSync } from '../hooks/useOfflineSync';
@@ -40,6 +41,7 @@ interface SurveyResponse {
   state: string | null;
   service_type: string | null;
   target_group: string | null;
+  health_unit_name: string | null;
   components?: Record<string, number>;
   created_at: string;
 }
@@ -80,7 +82,7 @@ export function Dashboard() {
         const [responsesResult, healthUnitsResult] = await Promise.all([
           supabase
             .from('survey_responses')
-            .select('id, score, is_high_quality, latitude, longitude, neighborhood, city, state, service_type, target_group, components, created_at')
+            .select('id, score, is_high_quality, latitude, longitude, neighborhood, city, state, service_type, target_group, health_unit_name, components, created_at')
             .order('created_at', { ascending: false }),
           supabase
             .from('health_units')
@@ -128,13 +130,13 @@ export function Dashboard() {
   }, [responses, filterState, filterCity]);
 
   const availableHealthUnits = useMemo(() => {
-    let filtered = healthUnits;
+    let filtered = responses;
     if (filterState !== 'all') filtered = filtered.filter(u => u.state === filterState);
     if (filterCity !== 'all') filtered = filtered.filter(u => u.city === filterCity);
     if (filterNeighborhood !== 'all') filtered = filtered.filter(u => u.neighborhood === filterNeighborhood);
-    const units = new Set(filtered.map(u => u.name).filter(Boolean) as string[]);
+    const units = new Set(filtered.map(u => u.health_unit_name).filter(Boolean) as string[]);
     return Array.from(units).sort();
-  }, [healthUnits, filterState, filterCity, filterNeighborhood]);
+  }, [responses, filterState, filterCity, filterNeighborhood]);
 
   const availableYears = useMemo(() => {
     const years = new Set(responses.map(r => new Date(r.created_at).getFullYear()));
@@ -152,7 +154,7 @@ export function Dashboard() {
       if (filterState !== 'all' && r.state !== filterState) return false;
       if (filterCity !== 'all' && r.city !== filterCity) return false;
       if (filterNeighborhood !== 'all' && r.neighborhood !== filterNeighborhood) return false;
-      // if (filterHealthUnit !== 'all' && r.health_unit !== filterHealthUnit) return false;
+      if (filterHealthUnit !== 'all' && r.health_unit_name !== filterHealthUnit) return false;
       if (filterServiceType !== 'all' && r.service_type !== filterServiceType) return false;
       if (filterTargetGroup !== 'all' && r.target_group !== filterTargetGroup) return false;
       
@@ -745,6 +747,9 @@ export function Dashboard() {
               </p>
             </div>
           </div>
+
+          {/* Interactive Choropleth Dashboard Component */}
+          <InteractiveChoroplethDashboard />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Mapa */}
