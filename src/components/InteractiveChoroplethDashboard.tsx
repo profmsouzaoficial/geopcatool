@@ -5,24 +5,30 @@ import {
   Geography,
   ZoomableGroup
 } from 'react-simple-maps';
-import { RefreshCw, Map as MapIcon, Plus, Minus } from 'lucide-react';
+import { RefreshCw, Map as MapIcon, Plus, Minus, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase'; // Importe real adicionado
-import geoUrl from '../../public/bairros_gv_otimizado.geojson?url';
-import geoDataRawString from '../../public/bairros_gv_otimizado.geojson?raw';
 import rewind from '@turf/rewind';
-
-const geoDataRaw = JSON.parse(geoDataRawString);
-const geoData = rewind(geoDataRaw, { reverse: true });
+import bbox from '@turf/bbox';
+import center from '@turf/center';
 
 interface BairroScore {
   bairro_nome: string;
   escore_geral: number;
 }
 
-export function InteractiveChoroplethDashboard() {
+interface InteractiveChoroplethDashboardProps {
+  filterState: string;
+  filterCity: string;
+}
+
+export function InteractiveChoroplethDashboard({ filterState, filterCity }: InteractiveChoroplethDashboardProps) {
   const [data, setData] = useState<BairroScore[]>([]); // Inicializa vazio
   const [selectedBairros, setSelectedBairros] = useState<string[]>([]);
-  const [position, setPosition] = useState({ coordinates: [-41.939, -18.870] as [number, number], zoom: 1.0 });
+  const [position, setPosition] = useState({ coordinates: [0, 0] as [number, number], zoom: 1.0 });
+  const [initialCenter, setInitialCenter] = useState<[number, number]>([0, 0]);
+  const [geoData, setGeoData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [mapScale, setMapScale] = useState(160000);
 
   // --------------------------------------------------------------------------
   // LÓGICA DO SUPABASE (Consulta tabela REAL)
@@ -30,41 +36,85 @@ export function InteractiveChoroplethDashboard() {
   
   useEffect(() => {
     async function fetchData() {
-      // 1. Busca os dados de pontuação por bairro (score não nulo e bairro válido)
-      const { data: qData, error } = await supabase
-        .from('survey_responses')
-        .select('neighborhood, score')
-        .not('neighborhood', 'is', null);
+      setLoading(true);
+      try {
+        const query = supabase
+          .from('survey_responses')
+          .select('neighborhood, score')
+          .not('neighborhood', 'is', null);
+
+        if (filterState && filterState !== 'all') query.eq('state', filterState);
+        if (filterCity && filterCity !== 'all') query.eq('city', filterCity);
+
+        const [responsesRes, geoRes] = await Promise.all([
+          query,
+          supabase
+            .from('geoJSON')
+            .select('neighbour_shp')
+            .eq('state', filterState)
+            .eq('city', filterCity)
+            .single()
+        ]);
         
-      if (!error && qData) {
-         // Agrupa para calcular a média
-         const aggMap = new Map<string, {total: number, count: number}>();
-         
-         qData.forEach(r => {
-           if (!r.neighborhood || r.score === null) return;
+        if (!responsesRes.error && responsesRes.data) {
+           // Agrupa para calcular a média
+           const aggMap = new Map<string, {total: number, count: number}>();
            
-           const current = aggMap.get(r.neighborhood) || {total: 0, count: 0};
-           aggMap.set(r.neighborhood, {
-             total: current.total + Number(r.score),
-             count: current.count + 1
+           responsesRes.data.forEach(r => {
+             if (!r.neighborhood || r.score === null) return;
+             
+             const current = aggMap.get(r.neighborhood) || {total: 0, count: 0};
+             aggMap.set(r.neighborhood, {
+               total: current.total + Number(r.score),
+               count: current.count + 1
+             });
            });
-         });
-         
-         const aggregatedData: BairroScore[] = [];
-         aggMap.forEach((val, key) => {
-           aggregatedData.push({
-             bairro_nome: key,
-             escore_geral: val.total / val.count
+           
+           const aggregatedData: BairroScore[] = [];
+           aggMap.forEach((val, key) => {
+             aggregatedData.push({
+               bairro_nome: key,
+               escore_geral: val.total / val.count
+             });
            });
-         });
-         
-         setData(aggregatedData);
-      } else {
-        console.error('Erro na consulta', error);
+           
+           setData(aggregatedData);
+        }
+
+        if (geoRes.data?.neighbour_shp) {
+          const rawGeoData = geoRes.data.neighbour_shp;
+          const mapData = rewind(rawGeoData, { reverse: true });
+          setGeoData(mapData);
+
+          const boundingBox = bbox(mapData);
+          const mapCenter = center(mapData);
+          const coords = mapCenter.geometry.coordinates as [number, number];
+          setInitialCenter(coords);
+          setPosition({ 
+            coordinates: coords,
+            zoom: 1.0 
+          });
+
+          // A heuristic for scale based on bbox size
+          const width = boundingBox[2] - boundingBox[0];
+          const height = boundingBox[3] - boundingBox[1];
+          const maxDim = Math.max(width, height);
+          
+          if (maxDim > 0) {
+             const scale = 360 / maxDim * 150; // Increased factor to fit better
+             setMapScale(scale);
+          }
+        } else {
+          setGeoData(null);
+        }
+      } catch (e) {
+          console.error("Error loading map", e);
+      } finally {
+        setLoading(false);
       }
     }
     fetchData();
-  }, []);
+  }, [filterState, filterCity]);
   
 
   // --------------------------------------------------------------------------
@@ -135,15 +185,20 @@ export function InteractiveChoroplethDashboard() {
          </div>
          
          <div className="flex-1 relative bg-blue-50/20 min-h-0 w-full">
-           {/* IMPORTANTE: Configurações de projeção otimizadas para Gov. Valadares */}
-           <ComposableMap
-             projection="geoMercator"
-             projectionConfig={{
-               scale: 160000,
-               center: [-41.939, -18.875] 
-             }}
-             style={{ width: "100%", height: "100%" }}
-           >
+           {loading ? (
+             <div className="absolute inset-0 flex items-center justify-center">
+               <Loader2 className="animate-spin text-blue-500 w-8 h-8" />
+             </div>
+           ) : geoData ? (
+             <>
+             <ComposableMap
+               projection="geoMercator"
+               projectionConfig={{
+                 scale: mapScale,
+                 center: initialCenter
+               }}
+               style={{ width: "100%", height: "100%" }}
+             >
              <ZoomableGroup 
                zoom={position.zoom} 
                center={position.coordinates} 
@@ -219,6 +274,13 @@ export function InteractiveChoroplethDashboard() {
                <Minus size={16} />
              </button>
            </div>
+           </>
+           ) : (
+             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 gap-2">
+               <MapIcon size={32} />
+               <span className="font-medium text-sm text-center">Nenhum polígono (GeoJSON) encontrado para<br/>{filterCity} - {filterState} na base.</span>
+             </div>
+           )}
          </div>
       </div>
     </div>

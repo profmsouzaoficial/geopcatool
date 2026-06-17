@@ -9,6 +9,12 @@ export function Inventory() {
   const selectionState = location.state as { targetGroup: string; version: string } | null;
   
   const [isSearchingCep, setIsSearchingCep] = useState(false);
+  const [allHealthUnits, setAllHealthUnits] = useState<{ id: string, name: string, state: string, city: string }[]>([]);
+  const [allGeoData, setAllGeoData] = useState<{ state: string, city: string }[]>([]);
+  const [statesList, setStatesList] = useState<string[]>([]);
+  const [citiesList, setCitiesList] = useState<string[]>([]);
+  const [selectedStateFilter, setSelectedStateFilter] = useState('');
+  const [selectedCityFilter, setSelectedCityFilter] = useState('');
   const [healthUnits, setHealthUnits] = useState<{ id: string, name: string }[]>([]);
   const [formData, setFormData] = useState({
     healthUnitName: '',
@@ -29,25 +35,65 @@ export function Inventory() {
     serviceType: selectionState?.targetGroup === 'Bucal' ? 'bucal' : 'geral'
   });
 
-  // Fetch health units from Supabase
+  // Fetch states and cities from geoJSON, and health units from health_units
   useEffect(() => {
-    const fetchHealthUnits = async () => {
+    const fetchSelectData = async () => {
       try {
-        const { data, error } = await supabase
-          .from('health_units')
-          .select('id, name')
-          .order('name');
+        const [geoRes, unitsRes] = await Promise.all([
+          supabase.from('geoJSON').select('state, city'),
+          supabase.from('health_units').select('id, name, state, city').order('name')
+        ]);
           
-        if (data && !error) {
-          setHealthUnits(data);
+        if (geoRes.data && !geoRes.error) {
+          setAllGeoData(geoRes.data);
+          const uniqueStates = [...new Set(geoRes.data.map(u => u.state).filter(Boolean))].sort();
+          setStatesList(uniqueStates as string[]);
+        }
+
+        if (unitsRes.data && !unitsRes.error) {
+          setAllHealthUnits(unitsRes.data);
         }
       } catch (error) {
-        console.error('Error fetching health units:', error);
+        console.error('Error fetching data:', error);
       }
     };
-    
-    fetchHealthUnits();
+    fetchSelectData();
   }, []);
+
+  // Update cities when state changes
+  useEffect(() => {
+    if (selectedStateFilter) {
+      const cities = allGeoData
+        .filter(u => u.state === selectedStateFilter)
+        .map(u => u.city)
+        .filter(Boolean);
+      const uniqueCities = [...new Set(cities)].sort();
+      setCitiesList(uniqueCities as string[]);
+      setSelectedCityFilter('');
+      setFormData(prev => ({ ...prev, healthUnitName: '', state: selectedStateFilter, city: '' }));
+      setHealthUnits([]);
+    } else {
+      setCitiesList([]);
+      setSelectedCityFilter('');
+      setFormData(prev => ({ ...prev, healthUnitName: '', state: '', city: '' }));
+      setHealthUnits([]);
+    }
+  }, [selectedStateFilter, allGeoData]);
+
+  // Update UBSs when city changes
+  useEffect(() => {
+    if (selectedStateFilter && selectedCityFilter) {
+      const units = allHealthUnits
+        .filter(u => u.state === selectedStateFilter && u.city === selectedCityFilter)
+        .map(u => ({ id: u.id, name: u.name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setHealthUnits(units);
+      setFormData(prev => ({ ...prev, healthUnitName: '', city: selectedCityFilter }));
+    } else {
+      setHealthUnits([]);
+      setFormData(prev => ({ ...prev, healthUnitName: '' }));
+    }
+  }, [selectedCityFilter, selectedStateFilter, allHealthUnits]);
 
   // Calculate age automatically when birthDate changes
   useEffect(() => {
@@ -164,6 +210,33 @@ export function Inventory() {
               <h3 className="text-xl font-bold text-slate-900">I. Identificação</h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-slate-700">Estado *</span>
+                <select 
+                  value={selectedStateFilter}
+                  onChange={(e) => setSelectedStateFilter(e.target.value)}
+                  required
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                >
+                  <option value="" disabled>Selecione o Estado</option>
+                  {statesList.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-slate-700">Município / Cidade *</span>
+                <select 
+                  value={selectedCityFilter}
+                  onChange={(e) => setSelectedCityFilter(e.target.value)}
+                  required
+                  disabled={!selectedStateFilter}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-slate-50 disabled:text-slate-400"
+                >
+                  <option value="" disabled>Selecione a Cidade</option>
+                  {citiesList.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+
               <label className="block space-y-2 md:col-span-2">
                 <span className="text-sm font-medium text-slate-700">Nome da Unidade de Saúde onde está sendo realizada a entrevista *</span>
                 <select 
@@ -171,7 +244,8 @@ export function Inventory() {
                   value={formData.healthUnitName}
                   onChange={handleChange}
                   required
-                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  disabled={!selectedCityFilter}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:bg-slate-50 disabled:text-slate-400"
                 >
                   <option value="" disabled>Selecione a Unidade de Saúde</option>
                   {healthUnits.map(unit => (

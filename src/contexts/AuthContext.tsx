@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Listen for changes on auth state (logged in, signed out, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+      if (event === 'SIGNED_OUT') {
         // Clear any stale data if needed
       }
       setUser(session?.user ?? null);

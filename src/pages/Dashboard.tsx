@@ -17,18 +17,49 @@ import {
   LineChart, Line
 } from 'recharts';
 import 'leaflet/dist/leaflet.css';
-import { Activity, Users, MapPin, TrendingUp, Loader2, Brain, FileText, Settings as SettingsIcon, Download } from 'lucide-react';
+import { Activity, Users, MapPin, TrendingUp, Loader2, Brain, FileText, Settings as SettingsIcon, Download, Map as MapIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 import { HeatmapLayer } from '../components/HeatmapLayer';
 import { InteractiveChoroplethDashboard } from '../components/InteractiveChoroplethDashboard';
+import { RidgePlot } from '../components/RidgePlot';
 import html2pdf from 'html2pdf.js';
 import { exportToEsusCSV } from '../utils/exportEsus';
 import { useOfflineSync } from '../hooks/useOfflineSync';
 import { WifiOff, RefreshCw } from 'lucide-react';
 import Slider from 'rc-slider';
 import 'rc-slider/assets/index.css';
+
+const stateNameToAbbr: Record<string, string> = {
+  'Acre': 'AC',
+  'Alagoas': 'AL',
+  'Amapá': 'AP',
+  'Amazonas': 'AM',
+  'Bahia': 'BA',
+  'Ceará': 'CE',
+  'Distrito Federal': 'DF',
+  'Espírito Santo': 'ES',
+  'Goiás': 'GO',
+  'Maranhão': 'MA',
+  'Mato Grosso': 'MT',
+  'Mato Grosso do Sul': 'MS',
+  'Minas Gerais': 'MG',
+  'Pará': 'PA',
+  'Paraíba': 'PB',
+  'Paraná': 'PR',
+  'Pernambuco': 'PE',
+  'Piauí': 'PI',
+  'Rio de Janeiro': 'RJ',
+  'Rio Grande do Norte': 'RN',
+  'Rio Grande do Sul': 'RS',
+  'Rondônia': 'RO',
+  'Roraima': 'RR',
+  'Santa Catarina': 'SC',
+  'São Paulo': 'SP',
+  'Sergipe': 'SE',
+  'Tocantins': 'TO'
+};
 
 interface SurveyResponse {
   id: string;
@@ -69,6 +100,7 @@ export function Dashboard() {
   
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [healthUnits, setHealthUnits] = useState<any[]>([]);
+  const [geoData, setGeoData] = useState<{state: string, city: string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState<string | null>(null);
@@ -79,18 +111,22 @@ export function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [responsesResult, healthUnitsResult] = await Promise.all([
+        const [responsesResult, healthUnitsResult, geoResult] = await Promise.all([
           supabase
             .from('survey_responses')
             .select('id, score, is_high_quality, latitude, longitude, neighborhood, city, state, service_type, target_group, health_unit_name, components, created_at')
             .order('created_at', { ascending: false }),
           supabase
             .from('health_units')
-            .select('*')
+            .select('*'),
+          supabase
+            .from('geoJSON')
+            .select('state, city')
         ]);
 
         if (responsesResult.error) throw responsesResult.error;
         if (healthUnitsResult.error) throw healthUnitsResult.error;
+        if (geoResult.error) throw geoResult.error;
 
         if (responsesResult.data && responsesResult.data.length > 0) {
           setResponses(responsesResult.data);
@@ -98,6 +134,10 @@ export function Dashboard() {
         
         if (healthUnitsResult.data) {
           setHealthUnits(healthUnitsResult.data);
+        }
+
+        if (geoResult.data) {
+          setGeoData(geoResult.data);
         }
       } catch (e) {
         console.error("Error fetching data from Supabase:", e);
@@ -110,33 +150,34 @@ export function Dashboard() {
   }, []);
 
   const availableStates = useMemo(() => {
-    const states = new Set(responses.map(r => r.state).filter(Boolean) as string[]);
+    const states = new Set(geoData.map(r => r.state).filter(Boolean) as string[]);
     return Array.from(states).sort();
-  }, [responses]);
+  }, [geoData]);
 
   const availableCities = useMemo(() => {
-    let filtered = responses;
+    let filtered = geoData;
     if (filterState !== 'all') filtered = filtered.filter(r => r.state === filterState);
     const cities = new Set(filtered.map(r => r.city).filter(Boolean) as string[]);
     return Array.from(cities).sort();
-  }, [responses, filterState]);
+  }, [geoData, filterState]);
 
   const availableNeighborhoods = useMemo(() => {
-    let filtered = responses;
-    if (filterState !== 'all') filtered = filtered.filter(r => r.state === filterState);
-    if (filterCity !== 'all') filtered = filtered.filter(r => r.city === filterCity);
-    const neighborhoods = new Set(filtered.map(r => r.neighborhood).filter(Boolean) as string[]);
-    return Array.from(neighborhoods).sort();
-  }, [responses, filterState, filterCity]);
-
-  const availableHealthUnits = useMemo(() => {
-    let filtered = responses;
+    let filtered = healthUnits;
     if (filterState !== 'all') filtered = filtered.filter(u => u.state === filterState);
     if (filterCity !== 'all') filtered = filtered.filter(u => u.city === filterCity);
-    if (filterNeighborhood !== 'all') filtered = filtered.filter(u => u.neighborhood === filterNeighborhood);
-    const units = new Set(filtered.map(u => u.health_unit_name).filter(Boolean) as string[]);
+    const neighborhoods = new Set(filtered.map(u => u.neighborhood).filter(Boolean) as string[]);
+    return Array.from(neighborhoods).sort();
+  }, [healthUnits, filterState, filterCity]);
+
+  const availableHealthUnits = useMemo(() => {
+    let filtered = healthUnits;
+    if (filterState !== 'all') filtered = filtered.filter(u => u.state === filterState);
+    if (filterCity !== 'all') filtered = filtered.filter(u => u.city === filterCity);
+    // Observe that health_units might not have neighborhood, so we don't filter it by neighborhood from the table.
+    // If you need that, we can conditionally do something. For now, filter by state and city.
+    const units = new Set(filtered.map(u => u.name).filter(Boolean) as string[]);
     return Array.from(units).sort();
-  }, [responses, filterState, filterCity, filterNeighborhood]);
+  }, [healthUnits, filterState, filterCity, filterNeighborhood]);
 
   const availableYears = useMemo(() => {
     const years = new Set(responses.map(r => new Date(r.created_at).getFullYear()));
@@ -151,10 +192,13 @@ export function Dashboard() {
 
   const filteredResponses = useMemo(() => {
     return responses.filter(r => {
-      if (filterState !== 'all' && r.state !== filterState) return false;
-      if (filterCity !== 'all' && r.city !== filterCity) return false;
-      if (filterNeighborhood !== 'all' && r.neighborhood !== filterNeighborhood) return false;
-      if (filterHealthUnit !== 'all' && r.health_unit_name !== filterHealthUnit) return false;
+      if (filterState !== 'all') {
+        const rStateAbbr = stateNameToAbbr[filterState] || filterState;
+        if (r.state !== filterState && r.state !== rStateAbbr) return false;
+      }
+      if (filterCity !== 'all' && r.city?.trim().toLowerCase() !== filterCity.trim().toLowerCase()) return false;
+      if (filterNeighborhood !== 'all' && r.neighborhood?.trim().toLowerCase() !== filterNeighborhood.trim().toLowerCase()) return false;
+      if (filterHealthUnit !== 'all' && r.health_unit_name?.trim().toLowerCase() !== filterHealthUnit.trim().toLowerCase()) return false;
       if (filterServiceType !== 'all' && r.service_type !== filterServiceType) return false;
       if (filterTargetGroup !== 'all' && r.target_group !== filterTargetGroup) return false;
       
@@ -178,7 +222,7 @@ export function Dashboard() {
   const regionalAverage = useMemo(() => {
     let regionalResponses = responses;
     if (filterCity !== 'all') {
-      regionalResponses = responses.filter(r => r.city === filterCity);
+      regionalResponses = responses.filter(r => r.city?.trim().toLowerCase() === filterCity.trim().toLowerCase());
     }
     if (regionalResponses.length === 0) return 0;
     return regionalResponses.reduce((acc, curr) => acc + (Number(curr.score) || 0), 0) / regionalResponses.length;
@@ -467,7 +511,7 @@ export function Dashboard() {
     const element = document.getElementById('dashboard-content');
     if (!element) return;
 
-    const opt = {
+    const opt: any = {
       margin:       10,
       filename:     'analise_pcatool.pdf',
       image:        { type: 'jpeg', quality: 0.98 },
@@ -682,7 +726,15 @@ export function Dashboard() {
 
       <main className="flex-1 p-4 space-y-6 mt-2 max-w-7xl mx-auto w-full">
         <div id="dashboard-content" className="space-y-6">
-          {state?.showFeedbackLoop && displayComponents && (
+          {filterState === 'all' || filterCity === 'all' ? (
+            <div className="bg-white p-12 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center justify-center text-slate-500 min-h-[50vh]">
+              <MapIcon className="w-16 h-16 text-slate-300 mb-4" />
+              <h2 className="text-xl font-bold text-slate-900 mb-2">Selecione um local</h2>
+              <p className="text-sm text-center">Por favor, selecione um <strong>Estado</strong> e uma <strong>Cidade</strong> na barra superior para visualizar o painel.</p>
+            </div>
+          ) : (
+            <>
+              {(state as any)?.showFeedbackLoop && displayComponents && (
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
               <h2 className="text-xl font-bold text-slate-900 mb-2">Feedback da Avaliação</h2>
               <p className="text-sm text-slate-500 mb-4">Resumo dos atributos da Atenção Primária para a avaliação recém-enviada.</p>
@@ -705,7 +757,7 @@ export function Dashboard() {
             </div>
           )}
 
-          {displayComponents && !state?.showFeedbackLoop && (
+          {displayComponents && !(state as any)?.showFeedbackLoop && (
             <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
               <h2 className="text-lg font-bold text-slate-900 mb-4">Escores por Componente (Última Avaliação)</h2>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
@@ -749,7 +801,9 @@ export function Dashboard() {
           </div>
 
           {/* Interactive Choropleth Dashboard Component */}
-          <InteractiveChoroplethDashboard />
+          {filterState !== 'all' && filterCity !== 'all' && (
+            <InteractiveChoroplethDashboard filterState={filterState} filterCity={filterCity} />
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Mapa */}
@@ -839,6 +893,19 @@ export function Dashboard() {
                     Dados insuficientes para gerar o gráfico de evolução.
                   </div>
                 )}
+              </div>
+            </section>
+
+            {/* Comparativo de Distribuição (Ridge Plot) */}
+            <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col">
+              <div className="mb-8">
+                <h2 className="text-lg font-bold text-slate-900 mb-2">Distribuição de Escores por Unidade de Saúde (Ridge Plot)</h2>
+                <p className="text-sm text-slate-500">
+                  Visualiza a curva de qualidade (Kernel Density) das unidades de saúde com mais avaliações. Picos estreitos indicam consistência; curvas alargadas indicam variação no atendimento.
+                </p>
+              </div>
+              <div className="w-full relative mt-4">
+                <RidgePlot data={filteredResponses.map(r => ({ health_unit_name: r.health_unit_name, score: Number(r.score) }))} />
               </div>
             </section>
 
@@ -1016,24 +1083,28 @@ export function Dashboard() {
               </div>
             )}
           </section>
+          </>
+          )}
         </div>
 
-        <div className="flex justify-end pt-4 gap-4">
-          <button
-            onClick={() => exportToEsusCSV(filteredResponses)}
-            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-medium transition-colors text-sm shadow-sm"
-          >
-            <Download size={18} />
-            Exportar e-SUS (CSV)
-          </button>
-          <button
-            onClick={handleSaveAnalysis}
-            className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white px-6 py-3 rounded-xl font-medium transition-colors text-sm shadow-sm"
-          >
-            <Download size={18} />
-            Salvar Análises (PDF)
-          </button>
-        </div>
+        {filterState !== 'all' && filterCity !== 'all' && (
+          <div className="flex justify-end pt-4 gap-4">
+            <button
+              onClick={() => exportToEsusCSV(filteredResponses)}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-medium transition-colors text-sm shadow-sm"
+            >
+              <Download size={18} />
+              Exportar e-SUS (CSV)
+            </button>
+            <button
+              onClick={handleSaveAnalysis}
+              className="flex items-center gap-2 bg-blue-800 hover:bg-blue-900 text-white px-6 py-3 rounded-xl font-medium transition-colors text-sm shadow-sm"
+            >
+              <Download size={18} />
+              Salvar Análises (PDF)
+            </button>
+          </div>
+        )}
       </main>
     </div>
   );
